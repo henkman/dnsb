@@ -1,0 +1,2 @@
+# dnsb
+dns block proxy
