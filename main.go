@@ -5,10 +5,8 @@ import (
 	"flag"
 	"log"
 	"os"
-	"path/filepath"
 	"strings"
 
-	"github.com/howeyc/fsnotify"
 	"github.com/miekg/dns"
 )
 
@@ -27,18 +25,19 @@ func init() {
 	flag.Parse()
 }
 
-func filter(block []string, qs []dns.Question) []dns.Question {
-	as := []dns.Question{}
+func filter(block []string, qs *[]dns.Question) {
+	i := 0
 next:
-	for _, q := range qs {
+	for i < len((*qs)) {
 		for _, b := range block {
-			if strings.HasSuffix(q.Name, b) {
+			if strings.HasSuffix((*qs)[i].Name, b) {
+				(*qs)[i] = (*qs)[len((*qs))-1]
+				(*qs) = (*qs)[:len((*qs))-1]
 				continue next
 			}
 		}
-		as = append(as, q)
+		i++
 	}
-	return as
 }
 
 func read_blocks() ([]string, error) {
@@ -67,31 +66,12 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	watcher, err := fsnotify.NewWatcher()
-	if err != nil {
-		log.Fatal(err)
-	}
-	go watcher.Watch(``)
-	go func() {
-		for {
-			select {
-			case ev := <-watcher.Event:
-				file := filepath.Base(ev.Name)
-				if ev.IsModify() && file == BLOCK_FILE {
-					block, err = read_blocks()
-					if err != nil {
-						log.Fatal(err)
-					}
-				}
-			}
-		}
-	}()
 	var c dns.Client
 	s := dns.Server{
 		Net:  "udp",
 		Addr: _listen,
 		Handler: dns.HandlerFunc(func(w dns.ResponseWriter, r *dns.Msg) {
-			if r.Question = filter(block, r.Question); len(r.Question) == 0 {
+			if filter(block, &r.Question); len(r.Question) == 0 {
 				w.WriteMsg(r)
 				return
 			}
