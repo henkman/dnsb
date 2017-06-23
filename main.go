@@ -54,6 +54,7 @@ func read_blocks() ([]string, error) {
 		}
 		block = append(block, strings.TrimRight(line, "\n")+".")
 	}
+	fd.Close()
 	return block, nil
 }
 
