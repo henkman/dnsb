@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/henkman/trie"
 	"github.com/miekg/dns"
 )
 
@@ -25,46 +26,13 @@ func init() {
 	flag.Parse()
 }
 
-func filter(block []string, qs *[]dns.Question) {
-	i := 0
-next:
-	for i < len((*qs)) {
-		for _, b := range block {
-			if strings.HasSuffix((*qs)[i].Name, b) {
-				(*qs)[i] = (*qs)[len((*qs))-1]
-				(*qs) = (*qs)[:len((*qs))-1]
-				continue next
-			}
-		}
-		i++
-	}
-}
-
-func read_blocks() ([]string, error) {
-	block := []string{}
-	fd, err := os.Open(BLOCK_FILE)
-	if err != nil {
-		return nil, err
-	}
-	bin := bufio.NewReader(fd)
-	for {
-		line, _ := bin.ReadString('\n')
-		if line == "" {
-			break
-		}
-		block = append(block, strings.TrimRight(line, "\n")+".")
-	}
-	fd.Close()
-	return block, nil
-}
-
 func main() {
 	if _resolve == "" {
 		flag.Usage()
 		return
 	}
-	block, err := read_blocks()
-	if err != nil {
+	var bt trie.Trie
+	if err := fillBlockTrie(&bt); err != nil {
 		log.Fatal(err)
 	}
 	var c dns.Client
@@ -72,7 +40,7 @@ func main() {
 		Net:  "udp",
 		Addr: _listen,
 		Handler: dns.HandlerFunc(func(w dns.ResponseWriter, r *dns.Msg) {
-			if filter(block, &r.Question); len(r.Question) == 0 {
+			if filter(&bt, &r.Question); len(r.Question) == 0 {
 				w.WriteMsg(r)
 				return
 			}
@@ -85,4 +53,45 @@ func main() {
 		}),
 	}
 	log.Fatal(s.ListenAndServe())
+}
+
+func filter(bt *trie.Trie, qs *[]dns.Question) {
+	i := 0
+next:
+	for i < len((*qs)) {
+		n := (*qs)[i].Name
+		n = n[:len(n)-1]
+		e := bt.Lookup(reverse(n))
+		if e != nil && (len(e.Children) == 0 || e.Leaf) {
+			(*qs)[i] = (*qs)[len((*qs))-1]
+			(*qs) = (*qs)[:len((*qs))-1]
+			continue next
+		}
+		i++
+	}
+}
+
+func fillBlockTrie(bt *trie.Trie) error {
+	fd, err := os.Open(BLOCK_FILE)
+	if err != nil {
+		return err
+	}
+	bin := bufio.NewReader(fd)
+	for {
+		line, _ := bin.ReadString('\n')
+		if line == "" {
+			break
+		}
+		bt.Insert(reverse(strings.TrimSpace(line)))
+	}
+	fd.Close()
+	return nil
+}
+
+func reverse(s string) string {
+	runes := []rune(s)
+	for i, j := 0, len(runes)-1; i < j; i, j = i+1, j-1 {
+		runes[i], runes[j] = runes[j], runes[i]
+	}
+	return string(runes)
 }
