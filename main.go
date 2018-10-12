@@ -2,57 +2,92 @@ package main
 
 import (
 	"bufio"
-	"flag"
-	"log"
+	"encoding/json"
+	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/henkman/trie"
+	"github.com/judwhite/go-svc/svc"
 	"github.com/miekg/dns"
 )
 
-const (
-	BLOCK_FILE = "dnsb.block"
-)
-
-var (
-	_resolve string
-	_listen  string
-)
-
-func init() {
-	flag.StringVar(&_resolve, "r", "", "dns server")
-	flag.StringVar(&_listen, "l", "127.0.0.1:53", "listen address")
-	flag.Parse()
-}
-
 func main() {
-	if _resolve == "" {
-		flag.Usage()
+	var opts struct {
+		Resolve string `json:"resolve"`
+		Listen  string `json:"listen"`
+	}
+	{
+		exe, err := os.Executable()
+		if err != nil {
+			panic(err)
+		}
+		dir := filepath.Dir(exe)
+		fd, err := os.Open(filepath.Join(dir, "dnsb.json"))
+		if err != nil {
+			panic(err)
+		}
+		err = json.NewDecoder(fd).Decode(&opts)
+		fd.Close()
+		if err != nil {
+			panic(err)
+		}
+	}
+	if opts.Resolve == "" {
+		fmt.Println("resolve server not specified")
 		return
 	}
+	s := Server{
+		Listen:  opts.Listen,
+		Resolve: opts.Resolve,
+	}
+	if err := svc.Run(&s); err != nil {
+		panic(err)
+	}
+}
+
+type Server struct {
+	s       dns.Server
+	Listen  string
+	Resolve string
+}
+
+func (s *Server) Init(env svc.Environment) error {
+	return nil
+}
+
+func (s *Server) Start() error {
 	var bt trie.Trie
 	if err := fillBlockTrie(&bt); err != nil {
-		log.Fatal(err)
+		return err
 	}
-	var c dns.Client
-	s := dns.Server{
-		Net:  "udp",
-		Addr: _listen,
-		Handler: dns.HandlerFunc(func(w dns.ResponseWriter, r *dns.Msg) {
-			if filter(&bt, &r.Question); len(r.Question) == 0 {
-				w.WriteMsg(r)
-				return
-			}
-			in, _, err := c.Exchange(r, _resolve)
-			if err != nil {
-				dns.HandleFailed(w, r)
-				return
-			}
-			w.WriteMsg(in)
-		}),
-	}
-	log.Fatal(s.ListenAndServe())
+	go func() {
+		var c dns.Client
+		s.s = dns.Server{
+			Net:  "udp",
+			Addr: s.Listen,
+			Handler: dns.HandlerFunc(func(w dns.ResponseWriter, r *dns.Msg) {
+				if filter(&bt, &r.Question); len(r.Question) == 0 {
+					w.WriteMsg(r)
+					return
+				}
+				in, _, err := c.Exchange(r, s.Resolve)
+				if err != nil {
+					dns.HandleFailed(w, r)
+					return
+				}
+				w.WriteMsg(in)
+			}),
+		}
+		go s.s.ListenAndServe()
+	}()
+	return nil
+}
+
+func (s *Server) Stop() error {
+	s.s.Shutdown()
+	return nil
 }
 
 func filter(bt *trie.Trie, qs *[]dns.Question) {
@@ -72,7 +107,7 @@ next:
 }
 
 func fillBlockTrie(bt *trie.Trie) error {
-	fd, err := os.Open(BLOCK_FILE)
+	fd, err := os.Open("dnsb.block")
 	if err != nil {
 		return err
 	}
