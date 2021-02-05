@@ -9,7 +9,7 @@ import (
 	"strings"
 
 	"github.com/henkman/trie"
-	"github.com/judwhite/go-svc/svc"
+	"github.com/judwhite/go-svc"
 	"github.com/miekg/dns"
 )
 
@@ -80,7 +80,7 @@ func (s *Server) Start() error {
 				w.WriteMsg(in)
 			}),
 		}
-		go s.s.ListenAndServe()
+		s.s.ListenAndServe()
 	}()
 	return nil
 }
